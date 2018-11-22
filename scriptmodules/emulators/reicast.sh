@@ -11,18 +11,22 @@
 
 rp_module_id="reicast"
 rp_module_desc="Dreamcast emulator Reicast"
-rp_module_help="ROM Extensions: .cdi .gdi\n\nCopy your Dremcast roms to $romdir/dreamcast\n\nCopy the required BIOS files dc_boot.bin and dc_flash.bin to $biosdir"
+rp_module_help="ROM Extensions: .cdi .gdi\n\nCopy your Dreamcast roms to $romdir/dreamcast\n\nCopy the required BIOS files dc_boot.bin and dc_flash.bin to $biosdir/dc"
 rp_module_licence="GPL2 https://raw.githubusercontent.com/reicast/reicast-emulator/master/LICENSE"
 rp_module_section="opt"
 rp_module_flags="!armv6 !mali"
 
 function depends_reicast() {
-    getDepends libsdl1.2-dev python-dev python-pip alsa-oss python-setuptools libevdev-dev
+    local depends=(libsdl2-dev python-dev python-pip alsa-oss python-setuptools libevdev-dev)
+    isPlatform "vero4k" && depends+=(vero3-userland-dev-osmc)
+    getDepends "${depends[@]}"
     pip install evdev
 }
 
 function sources_reicast() {
     if isPlatform "x11"; then
+        gitPullOrClone "$md_build" https://github.com/reicast/reicast-emulator.git
+    elif isPlatform "vero4k"; then
         gitPullOrClone "$md_build" https://github.com/reicast/reicast-emulator.git
     else
         gitPullOrClone "$md_build" https://github.com/RetroPie/reicast-emulator.git retropie
@@ -74,7 +78,8 @@ function configure_reicast() {
     mkdir -p "$md_conf_root/dreamcast/"{data,mappings}
 
     # symlink bios
-    ln -sf "$biosdir/"{dc_boot.bin,dc_flash.bin} "$md_conf_root/dreamcast/data"
+    mkUserDir "$biosdir/dc"
+    ln -sf "$biosdir/dc/"{dc_boot.bin,dc_flash.bin} "$md_conf_root/dreamcast/data"
 
     # copy default mappings
     cp "$md_inst/share/reicast/mappings/"*.cfg "$md_conf_root/dreamcast/mappings/"
@@ -96,6 +101,8 @@ _EOF_
     if isPlatform "rpi"; then
         addEmulator 1 "${md_id}-audio-omx" "dreamcast" "CON:$md_inst/bin/reicast.sh omx %ROM%"
         addEmulator 0 "${md_id}-audio-oss" "dreamcast" "CON:$md_inst/bin/reicast.sh oss %ROM%"
+    elif isPlatform "vero4k"; then
+        addEmulator 1 "$md_id" "dreamcast" "CON:$md_inst/bin/reicast.sh alsa %ROM%"
     else
         addEmulator 1 "$md_id" "dreamcast" "CON:$md_inst/bin/reicast.sh oss %ROM%"
     fi

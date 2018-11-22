@@ -90,7 +90,6 @@ function get_config() {
         DISABLE_JOYSTICK="$ini_value"
         iniGet "disable_menu"
         DISABLE_MENU="$ini_value"
-        [[ "$DISABLE_MENU" -eq 1 ]] && DISABLE_JOYSTICK=1
         iniGet "image_delay"
         IMAGE_DELAY="$ini_value"
         [[ -z "$IMAGE_DELAY" ]] && IMAGE_DELAY=2
@@ -299,7 +298,7 @@ function default_mode() {
             key="${SAVE_EMU}_render"
             ;;
     esac
-    default_process "$CONFIGDIR/all/videomodes.cfg" "$mode" "$key" "$value"
+    default_process "$VIDEO_CONF" "$mode" "$key" "$value"
 }
 
 function default_emulator() {
@@ -595,7 +594,7 @@ function choose_emulator() {
         ((i++))
     done < <(sort "$EMU_SYS_CONF")
     if [[ -z "${options[*]}" ]]; then
-        dialog --msgbox "No emulator options found for $SYSTEM - have you installed any snes emulators yet? Do you have a valid $EMU_SYS_CONF ?" 20 60 >/dev/tty
+        dialog --msgbox "No emulator options found for $SYSTEM - Do you have a valid $EMU_SYS_CONF ?" 20 60 >/dev/tty
         exit 1
     fi
     local cmd=(dialog $cancel --default-item "$default_id" --menu "Choose default emulator"  22 76 16 )

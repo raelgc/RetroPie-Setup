@@ -28,37 +28,7 @@ function sources_xpad() {
     gitPullOrClone "$md_inst" https://github.com/paroj/xpad.git
     cd "$md_inst"
     # LED support (as disabled currently in packaged RPI kernel) and allow forcing MAP_TRIGGERS_TO_BUTTONS
-    applyPatch "retropie.diff" <<\_EOF_
-diff --git a/xpad.c b/xpad.c
-index 633eab0..0cd7cfd 100644
---- a/xpad.c
-+++ b/xpad.c
-@@ -89,6 +89,8 @@
- 
- #define XPAD_PKT_LEN 64
- 
-+#define CONFIG_JOYSTICK_XPAD_LEDS 1
-+
- /* xbox d-pads should map to buttons, as is required for DDR pads
-    but we map them to axes when possible to simplify things */
- #define MAP_DPAD_TO_BUTTONS		(1 << 0)
-@@ -1748,12 +1750,13 @@ static int xpad_probe(struct usb_interface *intf, const struct usb_device_id *id
- 
- 		if (dpad_to_buttons)
- 			xpad->mapping |= MAP_DPAD_TO_BUTTONS;
--		if (triggers_to_buttons)
--			xpad->mapping |= MAP_TRIGGERS_TO_BUTTONS;
- 		if (sticks_to_null)
- 			xpad->mapping |= MAP_STICKS_TO_NULL;
- 	}
- 
-+	if (triggers_to_buttons)
-+		xpad->mapping |= MAP_TRIGGERS_TO_BUTTONS;
-+
- 	if (xpad->xtype == XTYPE_XBOXONE &&
- 	    intf->cur_altsetting->desc.bInterfaceNumber != 0) {
- 		/*
-_EOF_
+    applyPatch "$md_data/01_enable_leds_and_trigmapping.diff"
 }
 
 function build_xpad() {
@@ -72,7 +42,7 @@ function build_xpad() {
     else
         kernel="$(uname -r)"
     fi
-    dkms install -m xpad -v 0.4 -k "$kernel"
+    dkms install --force -m xpad -v 0.4 -k "$kernel"
 }
 
 function remove_xpad() {

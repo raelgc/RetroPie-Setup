@@ -204,14 +204,24 @@ function getDepends() {
     for required in $@; do
 
         # workaround for different package names on osmc / xbian
+        if [[ "$required" == "libraspberrypi-bin" ]]; then
+            isPlatform "osmc" && required="rbp-userland-osmc"
+            isPlatform "xbian" && required="xbian-package-firmware"
+        fi
         if [[ "$required" == "libraspberrypi-dev" ]]; then
             isPlatform "osmc" && required="rbp-userland-dev-osmc"
             isPlatform "xbian" && required="xbian-package-firmware"
         fi
 
-        # map libpng12-dev to libpng-dev for Ubuntu 16.10+
+        # map libpng12-dev to libpng-dev for Stretch+
         if [[ "$required" == "libpng12-dev" ]] && compareVersions "$__os_debian_ver" ge 9;  then
             required="libpng-dev"
+            printMsgs "console" "RetroPie module references libpng12-dev and should be changed to libpng-dev"
+        fi
+
+        # map libpng-dev to libpng12-dev for Jessie
+        if [[ "$required" == "libpng-dev" ]] && compareVersions "$__os_debian_ver" lt 9; then
+            required="libpng12-dev"
         fi
 
         if [[ "$md_mode" == "install" ]]; then
@@ -331,26 +341,35 @@ function rpSwap() {
 ## @param dest destination directory
 ## @param repo repository to clone or pull from
 ## @param branch branch to clone or pull from (optional)
+## @param commit specific commit to checkout (optional - requires branch to be set)
 ## @brief Git clones or pulls a repository.
 function gitPullOrClone() {
     local dir="$1"
     local repo="$2"
     local branch="$3"
     [[ -z "$branch" ]] && branch="master"
+    local commit="$4"
 
     if [[ -d "$dir/.git" ]]; then
         pushd "$dir" > /dev/null
+        runCmd git checkout "$branch"
         runCmd git pull
         runCmd git submodule update --init --recursive
         popd > /dev/null
     else
         local git="git clone --recursive"
-        if [[ "$__persistent_repos" -ne 1 && "$repo" == *github* ]]; then
+        if [[ "$__persistent_repos" -ne 1 && "$repo" == *github* && -z "$commit" ]]; then
             git+=" --depth 1"
         fi
         [[ "$branch" != "master" ]] && git+=" --branch $branch"
-        echo "$git \"$repo\" \"$dir\""
+        printMsgs "console" "$git \"$repo\" \"$dir\""
         runCmd $git "$repo" "$dir"
+    fi
+
+    if [[ -n "$commit" ]]; then
+        printMsgs "console" "Winding back $repo->$branch to commit: #$commit"
+        git branch -D "$commit" &>/dev/null
+        runCmd git -C "$dir" checkout -f "$commit" -b "$commit"
     fi
 }
 
@@ -898,14 +917,10 @@ function applyPatch() {
     local patch="$1"
     local patch_applied="${patch##*/}.applied"
 
-    # patch is in stdin
-    if [[ ! -t 0 ]]; then
-        cat >"$patch"
-    fi
-
     if [[ ! -f "$patch_applied" ]]; then
         if patch -f -p1 <"$patch"; then
             touch "$patch_applied"
+            printMsgs "console" "Successfully applied patch: $patch"
         else
             md_ret_errors+=("$md_id patch $patch failed to apply")
             return 1
@@ -975,6 +990,7 @@ function downloadAndExtract() {
 ## were not set to use the dispmanx SDL1 backend would just show in a small
 ## area of the screen.
 function ensureFBMode() {
+    [[ ! -f /etc/fb.modes ]] && return
     local res_x="$1"
     local res_y="$2"
     local res="${res_x}x${res_y}"
@@ -1143,8 +1159,6 @@ function delSystem() {
 ## @brief Adds a port to the emulationstation ports menu.
 ## @details Adds an emulators.cfg entry as with addSystem but also creates a launch script in `$datadir/ports/$name.sh`.
 ##
-## Can optionally take a script via stdin to use instead of the default launch script.
-##
 ## Can also optionally take a game parameter which can be used to create multiple launch
 ## scripts for different games using the same engine - eg for quake
 ##
@@ -1178,14 +1192,10 @@ function addPort() {
 
     mkUserDir "$romdir/ports"
 
-    if [[ -t 0 ]]; then
-        cat >"$file" << _EOF_
+    cat >"$file" << _EOF_
 #!/bin/bash
 "$rootdir/supplementary/runcommand/runcommand.sh" 0 _PORT_ "$port" "$game"
 _EOF_
-    else
-        cat >"$file"
-    fi
 
     chown $user:$user "$file"
     chmod +x "$file"

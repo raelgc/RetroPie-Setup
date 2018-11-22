@@ -17,16 +17,21 @@ rp_module_section="main"
 rp_module_flags="!mali !kms"
 
 function depends_mupen64plus() {
-    local depends=(cmake libsamplerate0-dev libspeexdsp-dev libsdl2-dev libpng12-dev fonts-freefont-ttf)
-    isPlatform "rpi" && depends+=(libraspberrypi-dev)
+    local depends=(cmake libsamplerate0-dev libspeexdsp-dev libsdl2-dev libpng-dev fonts-freefont-ttf)
+    isPlatform "rpi" && depends+=(libraspberrypi-bin libraspberrypi-dev)
     isPlatform "x11" && depends+=(libglew-dev libglu1-mesa-dev libboost-filesystem-dev)
     isPlatform "x86" && depends+=(nasm)
+    isPlatform "vero4k" && depends+=(vero3-userland-dev-osmc libboost-all-dev)
     getDepends "${depends[@]}"
 }
 
 function sources_mupen64plus() {
+    local commit
+    #addresses segfault from "Add support for 64 Disk Drive. #446" in mupen64plus-core master
+    isPlatform "vero4k" && commit=("master b75fdfb")
+
     local repos=(
-        'mupen64plus core'
+        "mupen64plus core ${commit[0]}"
         'mupen64plus ui-console'
         'mupen64plus audio-sdl'
         'mupen64plus input-sdl'
@@ -37,6 +42,12 @@ function sources_mupen64plus() {
             'gizmo98 audio-omx'
             'ricrpi video-gles2rice pandora-backport'
             'ricrpi video-gles2n64'
+        )
+    elif isPlatform "vero4k"; then
+        repos+=(
+            'ricrpi video-gles2n64'
+            'mupen64plus video-glide64mk2'
+            'ricrpi video-gles2rice pandora-backport'
         )
     else
         repos+=(
@@ -50,7 +61,7 @@ function sources_mupen64plus() {
     for repo in "${repos[@]}"; do
         repo=($repo)
         dir="$md_build/mupen64plus-${repo[1]}"
-        gitPullOrClone "$dir" https://github.com/${repo[0]}/mupen64plus-${repo[1]} ${repo[2]}
+        gitPullOrClone "$dir" https://github.com/${repo[0]}/mupen64plus-${repo[1]} ${repo[2]} ${repo[3]}
     done
     gitPullOrClone "$md_build/GLideN64" https://github.com/gonetz/GLideN64.git
 
@@ -74,6 +85,8 @@ function build_mupen64plus() {
             isPlatform "neon" && params+=("NEON=1")
             isPlatform "x11" && params+=("OSD=1" "PIE=1")
             isPlatform "x86" && params+=("SSE=SSE2")
+            isPlatform "vero4k" && params+=("HOST_CPU=armv8" "USE_GLES=1")
+
             [[ "$dir" == "mupen64plus-ui-console" ]] && params+=("COREDIR=$md_inst/lib/" "PLUGINDIR=$md_inst/lib/mupen64plus/")
             make -C "$dir/projects/unix" "${params[@]}" clean
             # MAKEFLAGS replace removes any distcc from path, as it segfaults with cross compiler and lto
@@ -84,11 +97,12 @@ function build_mupen64plus() {
     # build GLideN64
     "$md_build/GLideN64/src/getRevision.sh"
     pushd "$md_build/GLideN64/projects/cmake"
-    params=("-DMUPENPLUSAPI=On" "-DVEC4_OPT=On")
+    params=("-DMUPENPLUSAPI=On" "-DVEC4_OPT=On" "-DUSE_SYSTEM_LIBS=On")
     isPlatform "neon" && params+=("-DNEON_OPT=On")
-    isPlatform "rpi" && params+=("-DUSE_SYSTEM_LIBS=On")
-    if isPlatform "rpi3"; then 
+    if isPlatform "rpi3"; then
         params+=("-DCRC_ARMV8=On")
+    elif isPlatform "vero4k"; then
+        params+=("-DVERO4K=On" "-DCRC_ARMV8=On" "-DEGL=On")
     else
         params+=("-DCRC_OPT=On")
     fi
@@ -110,6 +124,12 @@ function build_mupen64plus() {
             'mupen64plus-video-gles2rice/projects/unix/mupen64plus-video-rice.so'
             'mupen64plus-video-gles2n64/projects/unix/mupen64plus-video-n64.so'
             'mupen64plus-audio-omx/projects/unix/mupen64plus-audio-omx.so'
+        )
+    elif isPlatform "vero4k"; then
+        md_ret_require+=(
+            'mupen64plus-video-gles2rice/projects/unix/mupen64plus-video-rice.so'
+            'mupen64plus-video-gles2n64/projects/unix/mupen64plus-video-n64.so'
+            'mupen64plus-video-glide64mk2/projects/unix/mupen64plus-video-glide64mk2.so'
         )
     else
         md_ret_require+=(
@@ -133,6 +153,7 @@ function install_mupen64plus() {
             isPlatform "rpi" && params+=("VC=1")
             isPlatform "neon" && params+=("NEON=1")
             isPlatform "x86" && params+=("SSE=SSE2")
+            isPlatform "vero4k" && params+=("HOST_CPU=armv8" "USE_GLES=1")
             make -C "$source/projects/unix" PREFIX="$md_inst" OPTFLAGS="$CFLAGS -O3 -flto" "${params[@]}" install
         fi
     done
@@ -154,6 +175,12 @@ function configure_mupen64plus() {
         done
         addEmulator 0 "${md_id}-gles2n64" "n64" "$md_inst/bin/mupen64plus.sh mupen64plus-video-n64 %ROM%"
         addEmulator 1 "${md_id}-auto" "n64" "$md_inst/bin/mupen64plus.sh AUTO %ROM%"
+    elif isPlatform "vero4k"; then
+        addEmulator 1 "${md_id}-gles2n64" "n64" "$md_inst/bin/mupen64plus.sh mupen64plus-video-n64 %ROM%"
+        addEmulator 0 "${md_id}-GLideN64" "n64" "$md_inst/bin/mupen64plus.sh mupen64plus-video-GLideN64 %ROM%"
+        addEmulator 0 "${md_id}-glide64" "n64" "$md_inst/bin/mupen64plus.sh mupen64plus-video-glide64mk2 %ROM%"
+        addEmulator 0 "${md_id}-gles2rice" "n64" "$md_inst/bin/mupen64plus.sh mupen64plus-video-rice %ROM%"
+        addEmulator 0 "${md_id}-auto" "n64" "$md_inst/bin/mupen64plus.sh AUTO %ROM%"
     else
         addEmulator 0 "${md_id}-GLideN64" "n64" "$md_inst/bin/mupen64plus.sh mupen64plus-video-GLideN64 %ROM%"
         addEmulator 1 "${md_id}-glide64" "n64" "$md_inst/bin/mupen64plus.sh mupen64plus-video-glide64mk2 %ROM%"

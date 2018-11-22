@@ -19,6 +19,7 @@ function depends_retroarch() {
     isPlatform "rpi" && depends+=(libraspberrypi-dev)
     isPlatform "mali" && depends+=(mali-fbdev)
     isPlatform "x11" && depends+=(libx11-xcb-dev libpulse-dev libvulkan-dev)
+    isPlatform "vero4k" && depends+=(vero3-userland-dev-osmc zlib1g-dev libfreetype6-dev)
 
     if compareVersions "$__os_debian_ver" ge 9; then
         depends+=(libavcodec-dev libavformat-dev libavdevice-dev)
@@ -37,7 +38,7 @@ function depends_retroarch() {
 }
 
 function sources_retroarch() {
-    gitPullOrClone "$md_build" https://github.com/libretro/RetroArch.git v1.7.3
+    gitPullOrClone "$md_build" https://github.com/libretro/RetroArch.git v1.7.5
     applyPatch "$md_data/01_hotkey_hack.diff"
     applyPatch "$md_data/02_disable_search.diff"
     applyPatch "$md_data/03_disable_udev_sort.diff"
@@ -56,6 +57,7 @@ function build_retroarch() {
     isPlatform "arm" && params+=(--enable-floathard)
     isPlatform "neon" && params+=(--enable-neon)
     isPlatform "x11" && params+=(--enable-vulkan)
+    isPlatform "vero4k" && params+=(--enable-mali_fbdev --with-opengles_libs='-L/opt/vero3/lib')
     ./configure --prefix="$md_inst" "${params[@]}"
     make clean
     make
@@ -147,7 +149,11 @@ function configure_retroarch() {
     iniSet "config_save_on_exit" "false"
     iniSet "video_aspect_ratio_auto" "true"
     iniSet "video_smooth" "false"
-    iniSet "video_threaded" "true"
+
+    if ! isPlatform "x86"; then
+        iniSet "video_threaded" "true"
+    fi
+
     iniSet "video_font_size" "12"
     iniSet "core_options_path" "$configdir/all/retroarch-core-options.cfg"
     isPlatform "x11" && iniSet "video_fullscreen" "true"
