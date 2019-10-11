@@ -13,7 +13,7 @@ rp_module_id="mehstation"
 rp_module_desc="mehstation emulator frontend"
 rp_module_licence="MIT https://raw.githubusercontent.com/remeh/mehstation/master/LICENSE"
 rp_module_section="exp"
-rp_module_flags="frontend"
+rp_module_flags="frontend nobin"
 
 function _get_database_mehstation() {
     echo "$configdir/all/mehstation/database.db"
@@ -102,7 +102,6 @@ function install_mehstation() {
 
 function configure_mehstation() {
     # move / symlink the configuration
-    mkUserDir "$home/.config"
     moveConfigDir "$home/.config/mehstation" "$md_conf_root/all/mehstation"
 
     local db="$md_conf_root/all/mehstation/database.db"

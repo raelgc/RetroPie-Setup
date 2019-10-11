@@ -71,7 +71,7 @@ function game_data_yquake2() {
 
     if [[ ! -f "$romdir/ports/quake2/baseq2/pak1.pak" && ! -f "$romdir/ports/quake2/baseq2/pak0.pak" ]]; then
         # get shareware game data
-        downloadAndExtract "https://deponie.yamagi.org/quake2/idstuff/q2-314-demo-x86.exe" "$romdir/ports/quake2/baseq2" "-j -LL"
+        downloadAndExtract "https://deponie.yamagi.org/quake2/idstuff/q2-314-demo-x86.exe" "$romdir/ports/quake2/baseq2" -j -LL
     fi
 
     # remove files that are likely to cause conflicts or unwanted default settings
@@ -85,8 +85,17 @@ function game_data_yquake2() {
 
 function configure_yquake2() {
     local params=()
-    if isPlatform "gles"; then
+
+    if isPlatform "x11"; then
+        params+=("+set vid_renderer gl3")
+    elif isPlatform "mesa"; then
+        params+=("+set vid_renderer gl1")
+    else
         params+=("+set vid_renderer soft")
+    fi
+
+    if isPlatform "kms"; then
+        params+=("+set r_mode -1" "+set r_customwidth %XRES%" "+set r_customheight %YRES%")
     fi
 
     mkRomDir "ports/quake2"
@@ -94,5 +103,5 @@ function configure_yquake2() {
     moveConfigDir "$home/.yq2" "$md_conf_root/quake2/yquake2"
 
     [[ "$md_mode" == "install" ]] && game_data_yquake2
-    add_games_yquake2 "$md_inst/quake2 -datadir $romdir/ports/quake2 ${params[@]} +set game %ROM%"
+    add_games_yquake2 "$md_inst/quake2 -datadir $romdir/ports/quake2 ${params[*]} +set game %ROM%"
 }

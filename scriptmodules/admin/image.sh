@@ -15,7 +15,7 @@ rp_module_section=""
 rp_module_flags="!arm"
 
 function depends_image() {
-    getDepends kpartx unzip qemu-user-static rsync parted squashfs-tools dosfstools e2fsprogs
+    getDepends kpartx unzip binfmt-support qemu-user-static rsync parted squashfs-tools dosfstools e2fsprogs
 }
 
 function create_chroot_image() {
@@ -37,6 +37,9 @@ function create_chroot_image() {
             url="https://downloads.raspberrypi.org/raspbian_lite/images/raspbian_lite-2017-07-05/2017-07-05-raspbian-jessie-lite.zip"
             ;;
         stretch)
+            url="https://downloads.raspberrypi.org/raspbian_lite/images/raspbian_lite-2019-04-09/2019-04-08-raspbian-stretch-lite.zip"
+            ;;
+        buster)
             url="https://downloads.raspberrypi.org/raspbian_lite_latest"
             ;;
         *)
@@ -55,13 +58,15 @@ function create_chroot_image() {
     fi
 
     # mount image
-    kpartx -s -a "$image"
+    local partitions=($(kpartx -s -a -v "$image" | awk '{ print "/dev/mapper/"$3 }'))
+    local part_boot="${partitions[0]}"
+    local part_root="${partitions[1]}"
 
     local tmp="$(mktemp -d -p "$md_build")"
     mkdir -p "$tmp/boot"
 
-    mount /dev/mapper/loop0p2 "$tmp"
-    mount /dev/mapper/loop0p1 "$tmp/boot"
+    mount "$part_root" "$tmp"
+    mount "$part_boot" "$tmp/boot"
 
     printMsgs "console" "Creating chroot from $image ..."
     rsync -aAHX --numeric-ids --delete "$tmp/" "$chroot/"
@@ -95,6 +100,13 @@ function install_rp_image() {
         sed -i "s/quiet/quiet loglevel=3 consoleblank=0 plymouth.enable=0 quiet/" "$chroot/boot/cmdline.txt"
     fi
 
+    # set default GPU mem, and overscan_scale so ES scales to overscan settings.
+    iniConfig "=" "" "$chroot/boot/config.txt"
+    iniSet "gpu_mem_256" 128
+    iniSet "gpu_mem_512" 256
+    iniSet "gpu_mem_1024" 256
+    iniSet "overscan_scale" 1
+
     cat > "$chroot/home/pi/install.sh" <<_EOF_
 #!/bin/bash
 cd
@@ -108,6 +120,7 @@ modules=(
     'bluetooth depends'
     'raspbiantools enable_modules'
     'autostart enable'
+    'usbromservice'
     'samba depends'
     'samba install_shares'
     'splashscreen default'
@@ -148,6 +161,9 @@ function _init_chroot_image() {
     local nameserver="$(nmcli device show | grep IP4.DNS  | awk '{print $NF; exit}')"
     # so we can resolve inside the chroot
     echo "nameserver $nameserver" >"$chroot"/etc/resolv.conf
+
+    # move /etc/ld.so.preload out of the way to avoid warnings
+    mv "$chroot/etc/ld.so.preload" "$chroot/etc/ld.so.preload.bak"
 }
 
 function _deinit_chroot_image() {
@@ -155,7 +171,12 @@ function _deinit_chroot_image() {
     [[ -z "$chroot" ]] && chroot="$md_build/chroot"
 
     trap "" INT
+
     >"$chroot/etc/resolv.conf"
+
+    # restore /etc/ld.so.preload
+    mv "$chroot/etc/ld.so.preload.bak" "$chroot/etc/ld.so.preload"
+
     umount -l "$chroot/proc" "$chroot/dev/pts"
     trap INT
 }
@@ -187,7 +208,7 @@ function create_image() {
 
     # make image size 300mb larger than contents of chroot
     local mb_size=$(du -s --block-size 1048576 $chroot 2>/dev/null | cut -f1)
-    ((mb_size+=300))
+    ((mb_size+=492))
 
     # create image
     printMsgs "console" "Creating image $image ..."
@@ -197,9 +218,10 @@ function create_image() {
     printMsgs "console" "partitioning $image ..."
     parted -s "$image" -- \
         mklabel msdos \
-        mkpart primary fat16 4 64 \
+        unit mib \
+        mkpart primary fat16 4 260 \
         set 1 boot on \
-        mkpart primary 64 -1
+        mkpart primary 260 -1s
 
     # format
     printMsgs "console" "Formatting $image ..."
@@ -210,10 +232,12 @@ function create_image() {
     local image_name="${image##*/}"
     pushd "$image_path"
 
-    kpartx -s -a "$image_name"
+    local partitions=($(kpartx -s -a -v "$image_name" | awk '{ print "/dev/mapper/"$3 }'))
+    local part_boot="${partitions[0]}"
+    local part_root="${partitions[1]}"
 
-    mkfs.vfat -F 16 -n boot /dev/mapper/loop0p1
-    mkfs.ext4 -O ^metadata_csum,^huge_file -L retropie /dev/mapper/loop0p2
+    mkfs.vfat -F 16 -n boot "$part_boot"
+    mkfs.ext4 -O ^metadata_csum,^huge_file -L retropie "$part_root"
 
     parted "$image_name" print
 
@@ -223,9 +247,9 @@ function create_image() {
     # mount
     printMsgs "console" "Mounting $image_name ..."
     local tmp="$(mktemp -d -p "$md_build")"
-    mount /dev/mapper/loop0p2 "$tmp"
+    mount "$part_root" "$tmp"
     mkdir -p "$tmp/boot"
-    mount /dev/mapper/loop0p1 "$tmp/boot"
+    mount "$part_boot" "$tmp/boot"
 
     # copy files
     printMsgs "console" "Rsyncing chroot to $image_name ..."
@@ -233,7 +257,7 @@ function create_image() {
 
     # we need to fix up the UUIDS for /boot/cmdline.txt and /etc/fstab
     local old_id="$(sed "s/.*PARTUUID=\([^-]*\).*/\1/" $tmp/boot/cmdline.txt)"
-    local new_id="$(blkid -s PARTUUID -o value /dev/mapper/loop0p2 | cut -c -8)"
+    local new_id="$(blkid -s PARTUUID -o value "$part_root" | cut -c -8)"
     sed -i "s/$old_id/$new_id/" "$tmp/boot/cmdline.txt"
     sed -i "s/$old_id/$new_id/g" "$tmp/etc/fstab"
 

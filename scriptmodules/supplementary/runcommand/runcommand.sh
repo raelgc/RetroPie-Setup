@@ -115,14 +115,19 @@ function start_joy2key() {
 
         # call joy2key.py: arguments are curses capability names or hex values starting with '0x'
         # see: http://pubs.opengroup.org/onlinepubs/7908799/xcurses/terminfo.html
-        "$ROOTDIR/supplementary/runcommand/joy2key.py" "$JOY2KEY_DEV" kcub1 kcuf1 kcuu1 kcud1 0x0a 0x09 &
-        JOY2KEY_PID=$!
+        "$ROOTDIR/supplementary/runcommand/joy2key.py" "$JOY2KEY_DEV" kcub1 kcuf1 kcuu1 kcud1 0x0a 0x09
+        JOY2KEY_PID=$(pgrep -f joy2key.py)
+
+    # ensure coherency between on-screen prompts and actual button mapping functionality
+    sleep 0.3
     fi
 }
 
 function stop_joy2key() {
     if [[ -n "$JOY2KEY_PID" ]]; then
-        kill -INT "$JOY2KEY_PID"
+        kill "$JOY2KEY_PID"
+        JOY2KEY_PID=""
+        sleep 1
     fi
 }
 
@@ -441,7 +446,7 @@ function main_menu() {
             [[ -n "$vid_rom" ]] && options+=(7 "Remove video mode choice for $EMULATOR + ROM")
         fi
 
-        if [[ "$COMMAND" =~ retroarch ]]; then
+        if [[ "$EMULATOR" == lr-* ]]; then
             options+=(
                 8 "Select RetroArch render res for $EMULATOR ($RENDER_RES)"
                 9 "Edit custom RetroArch config for this ROM"
@@ -459,7 +464,7 @@ function main_menu() {
 
         options+=(X "Launch")
 
-        if [[ "$COMMAND" =~ retroarch ]]; then
+        if [[ "$EMULATOR" == lr-* ]]; then
             options+=(L "Launch with verbose logging")
             options+=(Z "Launch with netplay enabled")
         fi
@@ -595,6 +600,7 @@ function choose_emulator() {
     done < <(sort "$EMU_SYS_CONF")
     if [[ -z "${options[*]}" ]]; then
         dialog --msgbox "No emulator options found for $SYSTEM - Do you have a valid $EMU_SYS_CONF ?" 20 60 >/dev/tty
+        stop_joy2key
         exit 1
     fi
     local cmd=(dialog $cancel --default-item "$default_id" --menu "Choose default emulator"  22 76 16 )
@@ -778,7 +784,7 @@ function config_dispmanx() {
 
 function retroarch_append_config() {
     # only for retroarch emulators
-    [[ ! "$COMMAND" =~ "retroarch" ]] && return
+    [[ "$EMULATOR" != lr-* ]] && return
 
     # make sure tmp folder exists for unpacking archives
     mkdir -p "/tmp/retroarch"
@@ -846,6 +852,7 @@ function restore_governor() {
 function get_sys_command() {
     if [[ ! -f "$EMU_SYS_CONF" ]]; then
         echo "No config found for system $SYSTEM"
+        stop_joy2key
         exit 1
     fi
 
@@ -892,12 +899,6 @@ function get_sys_command() {
         # remove CON:
         COMMAND="${COMMAND:4}"
         CONSOLE_OUT=1
-    fi
-
-    # workaround for launching xserver on correct/user owned tty
-    # see https://github.com/RetroPie/RetroPie-Setup/issues/1805
-    if [[ -n "$TTY" && "$COMMAND" =~ ^(startx|xinit) ]]; then
-        COMMAND+=" -- vt$TTY -keeptty"
     fi
 }
 
@@ -956,7 +957,6 @@ function show_launch() {
 
 function check_menu() {
     local dont_launch=0
-    start_joy2key
     # check for key pressed to enter configuration
     IFS= read -s -t 2 -N 1 key </dev/tty
     if [[ -n "$key" ]]; then
@@ -970,7 +970,6 @@ function check_menu() {
         tput civis
         clear
     fi
-    stop_joy2key
     return $dont_launch
 }
 
@@ -1031,17 +1030,24 @@ function runcommand() {
 
     load_mode_defaults
 
+    start_joy2key
     show_launch
 
     if [[ "$DISABLE_MENU" -ne 1 ]]; then
         if ! check_menu; then
+            stop_joy2key
             user_script "runcommand-onend.sh"
             clear
             restore_cursor_and_exit 0
         fi
     fi
+    stop_joy2key
 
     mode_switch "$MODE_REQ_ID"
+
+    # replace X/Y resolution (needed for KMS applications)
+    COMMAND="${COMMAND//\%XRES\%/${MODE_CUR[0]}}"
+    COMMAND="${COMMAND//\%YRES\%/${MODE_CUR[1]}}"
 
     [[ -n "$FB_NEW" ]] && switch_fb_res $FB_NEW
 
@@ -1051,6 +1057,12 @@ function runcommand() {
     [[ -n "$GOVERNOR" ]] && set_governor "$GOVERNOR"
 
     retroarch_append_config
+
+    # workaround for launching xserver on correct/user owned tty
+    # see https://github.com/RetroPie/RetroPie-Setup/issues/1805
+    if [[ -n "$TTY" && "$COMMAND" =~ ^(startx|xinit) ]]; then
+        COMMAND+=" -- vt$TTY -keeptty"
+    fi
 
     local ret
     launch_command
@@ -1072,7 +1084,7 @@ function runcommand() {
     # reset/restore framebuffer res (if it was changed)
     [[ -n "$FB_NEW" ]] && restore_fb
 
-    [[ "$COMMAND" =~ retroarch ]] && retroarchIncludeToEnd "$CONF_ROOT/retroarch.cfg"
+    [[ "$EMULATOR" == lr-* ]] && retroarchIncludeToEnd "$CONF_ROOT/retroarch.cfg"
 
     user_script "runcommand-onend.sh"
 

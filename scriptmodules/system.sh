@@ -76,13 +76,17 @@ function get_os_version() {
     local error=""
     case "$__os_id" in
         Raspbian|Debian)
+            # get major version (8 instead of 8.0 etc)
+            __os_debian_ver="${__os_release%%.*}"
+
             # Debian unstable is not officially supported though
             if [[ "$__os_release" == "unstable" ]]; then
-                __os_release=10
+                __os_debian_ver=11
             fi
 
-            if compareVersions "$__os_release" lt 8; then
-                error="You need Raspbian/Debian Jessie or newer"
+            # we still allow Raspbian 8 (jessie) to work (We show an popup in the setup module)
+            if compareVersions "$__os_debian_ver" lt 8; then
+                error="You need Raspbian/Debian Stretch or newer"
             fi
 
             # set a platform flag for osmc
@@ -95,13 +99,10 @@ function get_os_version() {
                 __platform_flags+=" xbian"
             fi
 
-            # we provide binaries for RPI on Raspbian < 10 only
-            if isPlatform "rpi" && compareVersions "$__os_release" lt 10; then
+            # we provide binaries for RPI on Raspbian 9 only
+            if isPlatform "rpi" && compareVersions "$__os_debian_ver" gt 8 && compareVersions "$__os_debian_ver" lt 10; then
                 __has_binaries=1
             fi
-
-            # get major version (8 instead of 8.0 etc)
-            __os_debian_ver="${__os_release%%.*}"
             ;;
         Devuan)
             if isPlatform "rpi"; then
@@ -125,24 +126,35 @@ function get_os_version() {
             ;;
         LinuxMint)
             if [[ "$__os_desc" != LMDE* ]]; then
-                if compareVersions "$__os_release" lt 17; then
-                    error="You need Linux Mint 17 or newer"
-                elif compareVersions "$__os_release" lt 18; then
-                    __os_ubuntu_ver="14.04"
-                    __os_debian_ver="8"
+                if compareVersions "$__os_release" lt 18; then
+                    error="You need Linux Mint 18 or newer"
                 elif compareVersions "$__os_release" lt 19; then
                     __os_ubuntu_ver="16.04"
-                    __os_debian_ver="8"
+                    __os_debian_ver="9"
                 else
                     __os_ubuntu_ver="18.04"
-                    __os_debian_ver="9"
+                    __os_debian_ver="10"
                 fi
             fi
             ;;
-        Ubuntu)
-            if compareVersions "$__os_release" lt 14.04; then
-                error="You need Ubuntu 14.04 or newer"
-            elif compareVersions "$__os_release" lt 16.10; then
+        Ubuntu|neon)
+            if compareVersions "$__os_release" lt 16.04; then
+                error="You need Ubuntu 16.04 or newer"
+            # although ubuntu 16.10 reports as being based on stretch it is before some
+            # packages were changed - we map to version 8 to avoid issues (eg libpng-dev name)
+            elif compareVersions "$__os_release" eq 16.10; then
+                __os_debian_ver="8"
+            elif compareVersions "$__os_release" lt 18.04; then
+                __os_debian_ver="9"
+            else
+                __os_debian_ver="10"
+            fi
+            __os_ubuntu_ver="$__os_release"
+            ;;
+        Zorin)
+            if compareVersions "$__os_release" lt 14; then
+                error="You need Zorin OS 14 or newer"
+            elif compareVersions "$__os_release" lt 14; then
                 __os_debian_ver="8"
             else
                 __os_debian_ver="9"
@@ -156,21 +168,14 @@ function get_os_version() {
             __os_debian_ver="9"
             ;;
         elementary)
-            if compareVersions "$__os_release" lt 0.3; then
-                error="You need Elementary OS 0.3 or newer"
-            elif compareVersions "$__os_release" lt 0.4; then
-                __os_ubuntu_ver="14.04"
-            else
+            if compareVersions "$__os_release" lt 0.4; then
+                error="You need Elementary OS 0.4 or newer"
+            elif compareVersions "$__os_release" eq 0.4; then
                 __os_ubuntu_ver="16.04"
-            fi
-            __os_debian_ver="8"
-            ;;
-        neon)
-            __os_ubuntu_ver="$__os_release"
-            if compareVersions "$__os_release" lt 16.10; then
                 __os_debian_ver="8"
             else
-                __os_debian_ver="9"
+                __os_ubuntu_ver="18.04"
+                __os_debian_ver="10"
             fi
             ;;
         *)
@@ -259,7 +264,7 @@ function get_platform() {
             "Rockchip (Device Tree)")
                 __platform="tinker"
                 ;;
-            Vero4K)
+            Vero4K|Vero4KPlus)
                 __platform="vero4k"
                 ;;
             "Allwinner sun8i Family")
@@ -379,9 +384,9 @@ function platform_imx6() {
 }
 
 function platform_vero4k() {
-    __default_cflags="-I/opt/vero3/include -L/opt/vero3/lib -O2 -march=armv8-a+crc -mtune=cortex-a53 -mfpu=neon-fp-armv8 -mfloat-abi=hard -ftree-vectorize -funsafe-math-optimizations"
+    __default_cflags="-I/opt/vero3/include -L/opt/vero3/lib -O2 -mcpu=cortex-a7 -mfpu=neon-vfpv4 -mfloat-abi=hard -ftree-vectorize -funsafe-math-optimizations"
     __default_asflags=""
     __default_makeflags="-j4"
-    __platform_flags="arm armv8 neon vero4k gles"
+    __platform_flags="arm armv7 neon vero4k gles"
 }
 

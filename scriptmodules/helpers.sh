@@ -28,6 +28,7 @@ function printMsgs() {
         [[ "$type" == "console" ]] && echo -e "$msg"
         [[ "$type" == "heading" ]] && echo -e "\n= = = = = = = = = = = = = = = = = = = = =\n$msg\n= = = = = = = = = = = = = = = = = = = = =\n"
     done
+    return 0
 }
 
 ## @fn printHeading()
@@ -43,6 +44,7 @@ function printHeading() {
 function fatalError() {
     printHeading "Error"
     echo -e "$1"
+    joy2keyStop
     exit 1
 }
 
@@ -197,9 +199,13 @@ function getDepends() {
     # check whether to use our own sdl2 - can be disabled to resolve issues with
     # mixing custom 64bit sdl2 and os distributed i386 version on multiarch
     local own_sdl2=1
+    # default to off for x11 targets due to issues with dependencies with recent
+    # Ubuntu (19.04). eg libavdevice58 requiring exactly 2.0.9 sdl2.
+    isPlatform "x11" && own_sdl2=0
     iniConfig " = " '"' "$configdir/all/retropie.cfg"
     iniGet "own_sdl2"
-    [[ "$ini_value" == "0" ]] && own_sdl2=0
+    [[ "$ini_value" == 1 ]] && own_sdl2=1
+    [[ "$ini_value" == 0 ]] && own_sdl2=0
 
     for required in $@; do
 
@@ -259,7 +265,7 @@ function getDepends() {
         # workaround to force installation of our fixed libsdl1.2 and custom compiled libsdl2
         local temp=()
         for required in ${packages[@]}; do
-            if isPlatform "rpi" && [[ "$required" == "libsdl1.2-dev" ]]; then
+            if isPlatform "videocore" && [[ "$required" == "libsdl1.2-dev" ]]; then
                 if [[ "$__has_binaries" -eq 1 ]]; then
                     rp_callModule sdl1 install_bin
                 else
@@ -342,13 +348,22 @@ function rpSwap() {
 ## @param repo repository to clone or pull from
 ## @param branch branch to clone or pull from (optional)
 ## @param commit specific commit to checkout (optional - requires branch to be set)
+## @param depth depth parameter for git. (optional)
 ## @brief Git clones or pulls a repository.
+## @details depth parameter will default to 1 (shallow clone) so long as __persistent_repos isn't set.
+## A depth parameter of 0 will do a full clone with all history.
 function gitPullOrClone() {
     local dir="$1"
     local repo="$2"
     local branch="$3"
     [[ -z "$branch" ]] && branch="master"
     local commit="$4"
+    local depth="$5"
+    if [[ -z "$depth" && "$__persistent_repos" -ne 1 && -z "$commit" ]]; then
+        depth=1
+    else
+        depth=0
+    fi
 
     if [[ -d "$dir/.git" ]]; then
         pushd "$dir" > /dev/null
@@ -358,19 +373,23 @@ function gitPullOrClone() {
         popd > /dev/null
     else
         local git="git clone --recursive"
-        if [[ "$__persistent_repos" -ne 1 && "$repo" == *github* && -z "$commit" ]]; then
-            git+=" --depth 1"
+        if [[ "$depth" -gt 0 ]]; then
+            git+=" --depth $depth"
         fi
-        [[ "$branch" != "master" ]] && git+=" --branch $branch"
+        git+=" --branch $branch"
         printMsgs "console" "$git \"$repo\" \"$dir\""
         runCmd $git "$repo" "$dir"
     fi
 
     if [[ -n "$commit" ]]; then
         printMsgs "console" "Winding back $repo->$branch to commit: #$commit"
-        git branch -D "$commit" &>/dev/null
+        git -C "$dir" branch -D "$commit" &>/dev/null
         runCmd git -C "$dir" checkout -f "$commit" -b "$commit"
     fi
+
+    branch=$(runCmd git -C "$dir" rev-parse --abbrev-ref HEAD)
+    commit=$(runCmd git -C "$dir" rev-parse HEAD)
+    printMsgs "console" "HEAD is now in branch '$branch' at commit '$commit'"
 }
 
 # @fn setupDirectories()
@@ -382,6 +401,12 @@ function setupDirectories() {
     mkUserDir "$biosdir"
     mkUserDir "$configdir"
     mkUserDir "$configdir/all"
+
+    # some home folders for configs that modules rely on
+    mkUserDir "$home/.cache"
+    mkUserDir "$home/.config"
+    mkUserDir "$home/.local"
+    mkUserDir "$home/.local/share"
 
     # make sure we have inifuncs.sh in place and that it is up to date
     mkdir -p "$rootdir/lib"
@@ -580,7 +605,7 @@ function addUdevInputRules() {
 ## @details Set a dispmanx flag for a module as to whether it should use the
 ## sdl1 dispmanx backend by default or not (0 for framebuffer, 1 for dispmanx).
 function setDispmanx() {
-    isPlatform "rpi" || return
+    isPlatform "dispmanx" || return
     local mod_id="$1"
     local status="$2"
     iniConfig "=" "\"" "$configdir/all/dispmanx.cfg"
@@ -932,16 +957,15 @@ function applyPatch() {
 ## @fn downloadAndExtract()
 ## @param url url of archive
 ## @param dest destination folder for the archive
-## @param opts number of leading components from file to strip off or unzip params
+## @param optional additional parameters to pass to the decompression tool.
 ## @brief Download and extract an archive
-## @details Download and extract an archive, optionally stripping off a number
-## of directories - equivalent to the tar `--strip-components parameter`. For
-## zip files, the strip parameter can contain additional options to send to unzip
+## @details Download and extract an archive.
 ## @retval 0 on success
 function downloadAndExtract() {
     local url="$1"
     local dest="$2"
-    local opts="$3"
+    shift 2
+    local opts=("$@")
 
     local ext="${url##*.}"
     local cmd=(tar -xv)
@@ -963,15 +987,14 @@ function downloadAndExtract() {
             local tmp="$(mktemp -d)"
             local file="${url##*/}"
             runCmd wget -q -O"$tmp/$file" "$url"
-            runCmd unzip $opts -o "$tmp/$file" -d "$dest"
+            runCmd unzip "${opts[@]}" -o "$tmp/$file" -d "$dest"
             rm -rf "$tmp"
             ret=$?
     esac
 
     if [[ "$is_tar" -eq 1 ]]; then
         mkdir -p "$dest"
-        cmd+=(-C "$dest")
-        [[ -n "$opts" ]] && cmd+=(--strip-components "$opts")
+        cmd+=(-C "$dest" "${opts[@]}")
 
         runCmd "${cmd[@]}" < <(wget -q -O- "$url")
         ret=$?
@@ -1024,7 +1047,7 @@ function joy2keyStart() {
 
     local params=("$@")
     if [[ "${#params[@]}" -eq 0 ]]; then
-        params=(kcub1 kcuf1 kcuu1 kcud1 0x0a 0x20)
+        params=(kcub1 kcuf1 kcuu1 kcud1 0x0a 0x20 0x1b)
     fi
 
     # get the first joystick device (if not already set)
@@ -1034,8 +1057,8 @@ function joy2keyStart() {
     [[ -z "$__joy2key_dev" ]] || pgrep -f joy2key.py >/dev/null && return 1
 
     # if joy2key.py is installed run it with cursor keys for axis/dpad, and enter + space for buttons 0 and 1
-    if "$scriptdir/scriptmodules/supplementary/runcommand/joy2key.py" "$__joy2key_dev" "${params[@]}" & 2>/dev/null; then
-        __joy2key_pid=$!
+    if "$scriptdir/scriptmodules/supplementary/runcommand/joy2key.py" "$__joy2key_dev" "${params[@]}" 2>/dev/null; then
+        __joy2key_pid=$(pgrep -f joy2key.py)
         return 0
     fi
 
@@ -1046,7 +1069,8 @@ function joy2keyStart() {
 ## @brief Stop previously started joy2key.py process.
 function joy2keyStop() {
     if [[ -n $__joy2key_pid ]]; then
-        kill -INT $__joy2key_pid 2>/dev/null
+        kill $__joy2key_pid 2>/dev/null
+        __joy2key_pid=""
         sleep 1
     fi
 }
@@ -1242,7 +1266,7 @@ function addEmulator() {
     fi
 
     # automatically add parameters for libretro modules
-    if [[ "$id" == lr-* && "$cmd" != "$emudir/retroarch/bin/retroarch"* ]]; then
+    if [[ "$id" == lr-* && "$cmd" =~ ^"$md_inst"[^[:space:]]*\.so ]]; then
         cmd="$emudir/retroarch/bin/retroarch -L $cmd --config $md_conf_root/$system/retroarch.cfg %ROM%"
     fi
 
@@ -1313,4 +1337,72 @@ function patchVendorGraphics() {
              --replace-needed libGLESv2.so libbrcmGLESv2.so \
              --replace-needed libOpenVG.so libbrcmOpenVG.so \
              --replace-needed libWFC.so libbrcmWFC.so "$filename"
+}
+
+## @fn dkmsManager()
+## @param mode dkms operation type
+## @module_name name of dkms module
+## @module_ver version of dkms module
+## Helper function to manage DKMS modules installed by RetroPie
+function dkmsManager() {
+    local mode="$1"
+    local module_name="$2"
+    local module_ver="$3"
+    local kernel="$(uname -r)"
+    local ver
+
+    case "$mode" in
+        install)
+            if dkms status | grep -q "^$module_name"; then
+                dkmsManager remove "$module_name" "$module_ver"
+            fi
+            if [[ "$__chroot" -eq 1 ]]; then
+                kernel="$(ls -1 /lib/modules | tail -n -1)"
+            fi
+            ln -sf "$md_inst" "/usr/src/${module_name}-${module_ver}"
+            dkms install --force -m "$module_name" -v "$module_ver" -k "$kernel"
+            if dkms status | grep -q "^$module_name"; then
+                md_ret_error+=("Failed to install $md_id")
+                return 1
+            fi
+            ;;
+        remove)
+            for ver in $(dkms status "$module_name" | cut -d"," -f2 | cut -d":" -f1); do
+                dkms remove -m "$module_name" -v "$ver" --all
+                rm -f "/usr/src/${module_name}-${ver}"
+            done
+            dkmsManager unload "$module_name" "$module_ver"
+            ;;
+        reload)
+            dkmsManager unload "$module_name" "$module_ver"
+            modprobe "$module_name"
+            ;;
+        unload)
+            if [[ -n "$(lsmod | grep ${module_name/-/_})" ]]; then
+                rmmod "$module_name"
+            fi
+            ;;
+    esac
+}
+
+## @fn getIPAddress()
+## @param dev optional specific network device to use for address lookup
+## @brief Obtains the current externally routable source IP address of the machine
+## @details This function first tries to obtain an external IPv4 route and
+## otherwise tries an IPv6 route if the IPv4 route can not be determined.
+## If no external route can be determined, nothing will be returned.
+## This function uses Google's DNS servers as the external lookup address.
+function getIPAddress() {
+    local dev="$1"
+    local ip_route
+
+    # first try to obtain an external IPv4 route
+    ip_route=$(ip -4 route get 8.8.8.8 ${dev:+dev $dev} 2>/dev/null)
+    if [[ -z "$ip_route" ]]; then
+        # if there is no IPv4 route, try to obtain an IPv6 route instead
+        ip_route=$(ip -6 route get 2001:4860:4860::8888 ${dev:+dev $dev} 2>/dev/null)
+    fi
+
+    # if an external route was found, report its source address
+    [[ -n "$ip_route" ]] && grep -oP "src \K[^\s]+" <<< "$ip_route"
 }
