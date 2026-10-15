@@ -33,6 +33,8 @@ function sources_lr-flycast() {
     gitPullOrClone
     # don't override our C/CXXFLAGS and set LDFLAGS to CFLAGS to avoid warnings on linking
     applyPatch "$md_data/01_flags_fix.diff"
+    applyPatch "$md_data/02_gcc14_unistd_fix.diff"
+    applyPatch "$md_data/03_gcc14_glsm_fix.diff"
 }
 
 function build_lr-flycast() {
@@ -57,7 +59,8 @@ function build_lr-flycast() {
     fi
     isPlatform "aarch64" && params+=("WITH_DYNAREC=arm64" "HOST_CPU_FLAGS=-DTARGET_LINUX_ARMv8")
     isPlatform "arm" && params+=("WITH_DYNAREC=arm")
-    ! isPlatform "x86" && params+=("HAVE_GENERIC_JIT=0" "HAVE_VULKAN=0")
+    ! isPlatform "x86" && params+=("HAVE_GENERIC_JIT=0")
+    isPlatform "vulkan" && params+=("HAVE_VULKAN=1") || params+=("HAVE_VULKAN=0")
     make "${params[@]}" clean
     CFLAGS+=" ${add_flags[@]}" make "${params[@]}"
     md_ret_require="$md_build/flycast_libretro.so"

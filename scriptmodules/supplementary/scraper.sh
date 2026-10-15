@@ -14,39 +14,72 @@ rp_module_desc="Scraper for EmulationStation by Steven Selph"
 rp_module_licence="MIT https://raw.githubusercontent.com/sselph/scraper/master/LICENSE"
 rp_module_repo="git https://github.com/sselph/scraper.git master"
 rp_module_section="opt"
-rp_module_flags="nobin"
+rp_module_flags=""
 
-function depends_scraper() {
-    rp_callModule golang install_bin
+function _update_hook_scraper() {
+    # remove previously installed 'golang' module 
+    rm -fr "$rootdir/supplementary/golang"
+}
+
+function _golang_scraper() {
+    local target_version=1.13.15
+    local goroot="$1"
+
+    if [[ -z "$1" ]]; then
+        __ERRMSGS+=("Missing installation folder for 'go' !")
+        return 1
+    fi
+
+    rm -rf "$goroot"
+    mkdir -p "$goroot"
+    local arch="armv6l"
+    if isPlatform "x86"; then
+        if isPlatform "64bit"; then
+            arch="amd64"
+        else
+            arch="386"
+        fi
+    fi
+    if isPlatform "aarch64"; then
+        arch="arm64"
+    fi
+    printMsgs "console" "Downloading go$target_version.linux-$arch.tar.gz"
+    downloadAndExtract "https://go.dev/dl/go${target_version}.linux-$arch.tar.gz" "$goroot" --strip-components 1 --exclude="go/test"
 }
 
 function sources_scraper() {
-    local goroot="$(_get_goroot_golang)"
-    GOPATH="$md_build" GOROOT="$goroot" "$goroot/bin/go" get -u github.com/sselph/scraper
-    # Use an older version of the TGDB go REST bindings, since the new one is not compatible with scraper
-    git -C "$md_build/src/github.com/J-Swift/thegamesdb-swagger-client-go/" checkout 43ed8a0b364ed2d8521d0
-    # Fix ScreenScraper scraping with the patch from PR-#265
-    git -C "$md_build/src/github.com/sselph/scraper" apply "$md_data/00-fix-screenscraper-response-parsing-265.diff"
-    # manually set repo_dir for packaging info / version checking
-    __mod_info[$md_id/repo_dir]="$md_build/src/github.com/sselph/scraper"
+    gitPullOrClone
+    # patch the TGDB API key since upstream's key is expired
+    local tgdb_api_key="b76d00f4dbf3449267b06086426df3bd8cb4c19fdc64b3224fa619ec4cd57e25"
+    sed -i "s/defaultGamesDbAPIKey = .*/defaultGamesDbAPIKey = \"$tgdb_api_key\"/" "$md_build/scraper.go"
 }
 
 function build_scraper() {
-    local goroot="$(_get_goroot_golang)"
-    GOPATH="$md_build" GOROOT="$goroot" "$goroot/bin/go" build github.com/sselph/scraper
+    local goroot="$md_build/goinst"
+
+    # install a local 'golang' version
+    _golang_scraper "$goroot"
+
+    rm -f go.mod
+    (
+        # use a subshell so the env vars here do not propagate globally
+        export GOROOT="$goroot"
+        export GOMODCACHE="$goroot/pkg-cache"
+        export GOCACHE="$goroot/build-cache"
+        "$goroot/bin/go" mod init github.com/sselph/scraper
+        "$goroot/bin/go" mod tidy
+        "$goroot/bin/go" get github.com/J-Swift/thegamesdb-swagger-client-go@43ed8a0b364ed2d8521d0
+        "$goroot/bin/go" build -o scraper
+    )
 }
 
 function install_scraper() {
     md_ret_files=(
         'scraper'
-        'src/github.com/sselph/scraper/LICENSE'
-        'src/github.com/sselph/scraper/README.md'
-        'src/github.com/sselph/scraper/hash.csv'
+        'LICENSE'
+        'README.md'
+        'hash.csv'
     )
-}
-
-function remove_scraper() {
-    rp_callModule golang remove
 }
 
 function get_ver_scraper() {
@@ -142,7 +175,7 @@ function scrape_scraper() {
 
     # trap ctrl+c and return if pressed (rather than exiting retropie-setup etc)
     trap 'trap 2; return 1' INT
-    sudo -u $user "$md_inst/scraper" ${params[@]}
+    sudo -u "$__user" "$md_inst/scraper" ${params[@]}
     trap 2
 }
 
@@ -205,7 +238,7 @@ function gui_scraper() {
 
     iniConfig " = " '"' "$configdir/all/scraper.cfg"
     eval $(_load_config_scraper)
-    chown $user:$user "$configdir/all/scraper.cfg"
+    chown "$__user":"$__group" "$configdir/all/scraper.cfg"
 
     local default
     while true; do

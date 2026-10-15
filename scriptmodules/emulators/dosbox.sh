@@ -18,7 +18,7 @@ rp_module_section="opt"
 rp_module_flags="sdl1 !mali"
 
 function depends_dosbox() {
-    local depends=(libasound2-dev libpng-dev automake autoconf zlib1g-dev "$@")
+    local depends=(alsa-utils libasound2-dev libpng-dev automake autoconf zlib1g-dev "$@")
     [[ "$md_id" == "dosbox" ]] && depends+=(libsdl1.2-dev libsdl-net1.2-dev libsdl-sound1.2-dev)
     isPlatform "rpi" && depends+=(timidity freepats)
     getDepends "${depends[@]}"
@@ -143,10 +143,10 @@ midi_synth start
 midi_synth stop
 _EOF_
     chmod +x "$romdir/pc/$launcher_name"
-    chown $user:$user "$romdir/pc/$launcher_name"
+    chown "$__user":"$__group" "$romdir/pc/$launcher_name"
 
     if [[ "$md_id" == "dosbox" || "$md_id" == "dosbox-sdl2" ]]; then
-        local config_path=$(su "$user" -c "\"$md_inst/bin/dosbox\" -printconf")
+        local config_path=$(su "$__user" -c "\"$md_inst/bin/dosbox\" -printconf")
         if [[ -f "$config_path" ]]; then
             iniConfig " = " "" "$config_path"
             iniSet "usescancodes" "false"

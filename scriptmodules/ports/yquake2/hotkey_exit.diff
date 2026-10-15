@@ -1,0 +1,64 @@
+diff --git a/src/client/input/sdl2.c b/src/client/input/sdl2.c
+index c280a4f4..678fd7f1 100644
+--- a/src/client/input/sdl2.c
++++ b/src/client/input/sdl2.c
+@@ -96,6 +96,8 @@ static float mouse_x, mouse_y;
+ static int joystick_left_x, joystick_left_y, joystick_right_x, joystick_right_y;
+ static qboolean mlooking;
+ 
++static qboolean hotkey_back = false;	// RetroPie Hotkey is Back instead of Guide
++
+ // The last time input events were processed.
+ // Used throughout the client.
+ int sys_frame_time;
+@@ -851,6 +853,7 @@ IN_Update(void)
+ 	static qboolean left_trigger = false;
+ 	static qboolean right_trigger = false;
+ 	static qboolean left_stick[4] = {false, false, false, false};   // left, right, up, down virtual keys
++	static qboolean hotkey_pressed = false;	// is Hotkey in RetroPie pressed
+ 
+ 	static int consoleKeyCode = 0;
+ 
+@@ -1049,9 +1052,24 @@ IN_Update(void)
+ 			case SDL_CONTROLLERBUTTONDOWN:
+ 			{
+ 				unsigned char btn = event.cbutton.button;
++				qboolean down = (event.type == SDL_CONTROLLERBUTTONDOWN);
+ 
+-				Key_Event( (btn == SDL_CONTROLLER_BUTTON_START)? K_ESCAPE : K_JOY_FIRST_BTN + btn,
+-					(event.type == SDL_CONTROLLERBUTTONDOWN), true );
++				switch (btn)
++				{
++					case SDL_CONTROLLER_BUTTON_START:
++						if (hotkey_pressed && down)
++							Cbuf_AddText("quit");
++						else
++							Key_Event( K_ESCAPE, down, true );
++						break;
++
++					case SDL_CONTROLLER_BUTTON_BACK:
++						if (hotkey_back)
++					case SDL_CONTROLLER_BUTTON_GUIDE:
++							hotkey_pressed = down;
++					default:
++						Key_Event( K_JOY_FIRST_BTN + btn, down, true );
++				}
+ 				break;
+ 			}
+ 
+@@ -2754,6 +2772,7 @@ IN_Controller_Init(qboolean notify_user)
+ 
+ 			show_gamepad = true;
+ 			Com_Printf("Enabled as Game Controller, settings:\n%s\n", SDL_GameControllerMapping(controller));
++			hotkey_back = ( !strstr(SDL_GameControllerMapping(controller), "guide:") );
+ 			IN_Gyro_and_LED_Enabling();
+ 
+ 			joystick_haptic = SDL_HapticOpenFromJoystick(SDL_GameControllerGetJoystick(controller));
+@@ -2965,6 +2984,7 @@ IN_Controller_Shutdown(qboolean notify_user)
+ 	show_gamepad = show_gyro = show_haptic = gyro_active = gyro_enabled = false;
+ 	joystick_left_x = joystick_left_y = joystick_right_x = joystick_right_y = 0;
+ 	joy_active_layout = LAYOUT_NONE;
++	hotkey_back = false;
+ 
+ #ifdef NO_SDL_GYRO
+ 	if (imu_joystick)

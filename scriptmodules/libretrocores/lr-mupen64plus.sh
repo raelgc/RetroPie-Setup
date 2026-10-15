@@ -49,6 +49,9 @@ function sources_lr-mupen64plus() {
 
     # Allows GLES3 with rpi
     applyPatch "$md_data/0002-rpi-gles3.patch"
+
+    # Fix building with GCC 15
+    applyPatch "$md_data/0003-fix-fsqrt-conflict.patch"
 }
 
 function build_lr-mupen64plus() {
@@ -60,15 +63,19 @@ function build_lr-mupen64plus() {
         params+=(platform="$__platform-mesa")
     elif isPlatform "mali"; then
         params+=(platform="odroid")
-    else
-        isPlatform "arm" && params+=(WITH_DYNAREC=arm)
-        isPlatform "neon" && params+=(HAVE_NEON=1)
     fi
+
+    # set these ourselves, to fix missing platforms in the Makefile (eg. rpi5)
+    isPlatform "arm" && params+=(WITH_DYNAREC=arm)
+    isPlatform "neon" && params+=(HAVE_NEON=1)
+
     if isPlatform "gles3"; then
         params+=(FORCE_GLES3=1)
     elif isPlatform "gles"; then
         params+=(FORCE_GLES=1)
     fi
+    # for GCC 15 and up
+    CFLAGS+=" -Wno-incompatible-pointer-types"
     make clean
     make "${params[@]}"
     rpSwap off
